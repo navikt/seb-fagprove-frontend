@@ -1,0 +1,8 @@
+node_modules/
+.next/
+out/
+build/
+coverage/
+.nais/*.yaml
+pnpm-lock.yaml
+public/mockServiceWorker.js
