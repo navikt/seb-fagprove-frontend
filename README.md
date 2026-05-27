@@ -17,9 +17,6 @@ rm -rf .git
 git init
 git remote add origin git@github.com:navikt/seb-fagprove-frontend.git
 
-# Sett opp npm autentisering for @navikt-pakker
-echo "//npm.pkg.github.com/:_authToken=DIN_TOKEN" >> ~/.npmrc
-
 # Installer avhengigheter
 pnpm install
 
@@ -68,8 +65,7 @@ src/
 2. Bytt ingress-URL i `.nais/app.yaml` til samme appnavn.
 3. Bytt `BACKEND_URL` og `accessPolicy.outbound.rules.application` til endelig backendnavn.
 4. Bytt `image_suffix` i `.github/workflows/main.yaml` til samme frontendnavn.
-5. Legg til `READER_TOKEN` secret i GitHub repo settings.
-6. Autoriser repoet for deploy i Nais Console.
+5. Autoriser repoet for deploy i Nais Console.
 
 ## Fullstack-kobling
 

@@ -20,7 +20,6 @@ jobs:
         with:
           team: laerlinger
           image_suffix: seb-fagprove-frontend-dev
-          build_secrets: NODE_AUTH_TOKEN=${{ secrets.READER_TOKEN }}
       - name: Deploy to Nais
         uses: nais/deploy/actions/deploy@v2
         env:
