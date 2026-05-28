@@ -18,7 +18,7 @@ export default function Home() {
       <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
         <ThemeToggle />
       </div>
-      <Heading size="xlarge">Seb fagprøve</Heading>
+      <Heading size="xlarge">Seb fagprøve klar</Heading>
       <BodyLong>Frontend er klar til å hente data fra backend via /api.</BodyLong>
       <BackendStatus />
     </main>
