@@ -1,0 +1,14 @@
+node_modules
+.next
+out
+coverage
+.turbo
+.pnpm-store
+
+.git
+.idea
+.DS_Store
+*.log
+
+.env*
+!.env.example
