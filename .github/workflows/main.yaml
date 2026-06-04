@@ -20,6 +20,8 @@ jobs:
         with:
           team: laerlinger
           image_suffix: dev
+          build_args: |
+            BACKEND_URL=http://seb-fagprove-backend-dev
       - name: Deploy to Nais
         uses: nais/deploy/actions/deploy@v2
         env:
