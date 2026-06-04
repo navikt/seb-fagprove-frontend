@@ -4,28 +4,26 @@ import {
   Alert,
   BodyLong,
   BodyShort,
+  Box,
   Button,
   Detail,
+  HGrid,
   Heading,
   HStack,
+  InternalHeader,
   Label,
   Loader,
-  Panel,
+  Modal,
+  Radio,
+  RadioGroup,
+  Spacer,
   Tag,
   Table,
   Textarea,
-  Tooltip,
+  VStack,
 } from '@navikt/ds-react';
-import {
-  CalculatorIcon,
-  CheckmarkCircleIcon,
-  FileSearchIcon,
-  PaperplaneIcon,
-  XMarkOctagonIcon,
-} from '@navikt/aksel-icons';
-import { useMemo, useState } from 'react';
-import { BackendStatus } from '@/components/BackendStatus';
-import { ThemeToggle } from '@/components/ThemeToggle';
+import { FileCheckmarkIcon, RotateRightIcon, TasklistStartIcon } from '@navikt/aksel-icons';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 
 type Inntektstype =
   | 'ARBEID'
@@ -51,7 +49,7 @@ type Inntektsregistrering = {
 type Soknad = {
   id: string;
   beskrivelse: string;
-  fnr: string;
+  fodselsnummer: string;
   erNorskBorger: boolean;
   termindato: string;
   oppgittArsinntekt: number;
@@ -67,6 +65,30 @@ type Regelvurdering = {
   begrunnelse: string;
 };
 
+type Beregningsgrunnlag = {
+  arssats: number;
+  oppgittArsinntekt: number;
+  avvikProsent: number | null;
+  grunnlagBelop: number | null;
+  kreverManuellVurdering: boolean;
+};
+
+type Stonadsperiode = {
+  totalUker: number;
+  rettsforhold: Rettsforhold;
+  antallBarn: number;
+  dekningsgrad: Dekningsgrad;
+};
+
+type Kvoter = {
+  modrekvote: number;
+  fedrekvote: number;
+  fellesperiode: number;
+  forhandskvoteMor: number;
+  flerbarnsbonus: number;
+  totalUker: number;
+};
+
 type Vedtak = {
   id: string;
   soknadId: string;
@@ -74,17 +96,23 @@ type Vedtak = {
   tittel: string;
   begrunnelse: string;
   regelvurderinger: Regelvurdering[];
+  beregningsgrunnlag?: Beregningsgrunnlag | null;
+  stonadsperiode?: Stonadsperiode | null;
+  kvoter?: Kvoter | null;
 };
 
-type BackendState =
-  | { type: 'idle' }
+type SoknaderState =
   | { type: 'loading' }
-  | { type: 'success'; vedtak: Vedtak }
+  | { type: 'success'; soknader: Soknad[] }
   | { type: 'error'; message: string };
 
-const HALV_G_2025 = 65_080;
-const KRAV_TIL_MANEDER = 6;
-const OPPTJENINGSPERIODE = 10;
+type VurderingStatus = { type: 'loading' } | { type: 'error'; message: string };
+type SaksbehandlerResultat = Exclude<VedtakType, 'MANUELL_VURDERING'>;
+
+type SaksbehandlerVurdering = {
+  resultat: SaksbehandlerResultat;
+  begrunnelse: string;
+};
 
 const GODKJENTE_INNTEKTSTYPER: Inntektstype[] = [
   'ARBEID',
@@ -96,316 +124,916 @@ const GODKJENTE_INNTEKTSTYPER: Inntektstype[] = [
   'PLEIEPENGER',
 ];
 
-const SOKNADER: Soknad[] = [
-  {
-    id: 'FP-001',
-    beskrivelse: 'Fast arbeid, stabil inntekt',
-    fnr: '04059012377',
-    erNorskBorger: true,
-    termindato: '2026-08-15',
-    oppgittArsinntekt: 540_000,
-    inntektshistorikk: lagInntektshistorikk('ARBEID', 45_000),
-    antallBarn: 1,
-    rettsforhold: 'BEGGE',
-    dekningsgrad: 'HUNDRE_PROSENT',
-  },
-  {
-    id: 'FP-002',
-    beskrivelse: 'Kort opptjening, norsk borger',
-    fnr: '11088845601',
-    erNorskBorger: true,
-    termindato: '2026-09-01',
-    oppgittArsinntekt: 200_000,
-    inntektshistorikk: lagInntektshistorikk('ARBEID', 50_000, 4, 5),
-    antallBarn: 1,
-    rettsforhold: 'KUN_MOR',
-    dekningsgrad: 'HUNDRE_PROSENT',
-  },
-  {
-    id: 'FP-003',
-    beskrivelse: 'Ikke norsk borger',
-    fnr: '22047778912',
-    erNorskBorger: false,
-    termindato: '2026-10-20',
-    oppgittArsinntekt: 600_000,
-    inntektshistorikk: lagInntektshistorikk('ARBEID', 50_000),
-    antallBarn: 2,
-    rettsforhold: 'BEGGE',
-    dekningsgrad: 'ATTI_PROSENT',
-  },
-  {
-    id: 'FP-004',
-    beskrivelse: 'Kun stipend fra Lånekassen',
-    fnr: '30019532109',
-    erNorskBorger: true,
-    termindato: '2026-11-05',
-    oppgittArsinntekt: 144_000,
-    inntektshistorikk: lagInntektshistorikk('STIPEND_LANEKASSEN', 12_000),
-    antallBarn: 1,
-    rettsforhold: 'KUN_FAR',
-    dekningsgrad: 'HUNDRE_PROSENT',
-  },
-];
+const TOM_SOKNADSLISTE: Soknad[] = [];
+
+const SAKSTITLER: Record<string, string> = {
+  'fp-001-happy-path': 'Full opptjening',
+  'fp-002-ikke-medlem': 'Ikke medlem',
+  'fp-003-for-fa-mnd': 'For kort opptjening',
+  'fp-004-annualisert-under-halv-G': 'Lav beregnet årsinntekt',
+  'fp-005-manuell-vurdering': 'Manuell vurdering',
+  'fp-006-6G-tak': 'Inntekt over 6 G',
+  'fp-007-kun-far': 'Kun far har rett',
+  'fp-008-tvillinger': 'Tvillinger',
+  'fp-009-stipend-lanekassen': 'Kun stipend',
+  'fp-010-trillinger-80': 'Trillinger, 80 prosent',
+  'fp-011-kun-mor-80': 'Kun mor har rett',
+  'fp-012-oppgitt-arsinntekt-null': 'Mangler årsinntekt',
+};
+
+const SAKSFORKLARINGER: Record<string, string> = {
+  'fp-001-happy-path': 'Søker har nok opptjening, norsk medlemskap og stabil inntekt.',
+  'fp-002-ikke-medlem': 'Søker mangler medlemskap i folketrygden.',
+  'fp-003-for-fa-mnd': 'Søker har inntekt i for få av de siste ti månedene.',
+  'fp-004-annualisert-under-halv-G': 'Beregnet årsinntekt er under minstekravet på 1/2 G.',
+  'fp-005-manuell-vurdering': 'Inntektsavviket er for stort og må vurderes manuelt.',
+  'fp-006-6G-tak': 'Søker har inntekt over 6 G. Beregningsgrunnlaget begrenses av taket.',
+  'fp-007-kun-far': 'Bare far har rett til foreldrepenger i denne saken.',
+  'fp-008-tvillinger': 'Søknaden gjelder tvillinger og skal gi flerbarnsbonus.',
+  'fp-009-stipend-lanekassen': 'Søker har bare stipend, som ikke gir opptjening.',
+  'fp-010-trillinger-80': 'Søknaden gjelder trillinger med 80 prosent dekningsgrad.',
+  'fp-011-kun-mor-80': 'Bare mor har rett til foreldrepenger med 80 prosent dekningsgrad.',
+  'fp-012-oppgitt-arsinntekt-null': 'Søker mangler oppgitt årsinntekt.',
+};
+
+async function hentVedtak(soknad: Soknad): Promise<Vedtak> {
+  const response = await fetch('/api/foreldrepenger/vurder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(soknad),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Backend svarte med HTTP ${response.status}`);
+  }
+
+  return (await response.json()) as Vedtak;
+}
 
 export function ForeldrepengerDashboard() {
-  const [selectedId, setSelectedId] = useState(SOKNADER[0].id);
-  const [backendState, setBackendState] = useState<BackendState>({ type: 'idle' });
+  const [soknaderState, setSoknaderState] = useState<SoknaderState>({ type: 'loading' });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [vedtakBySoknadId, setVedtakBySoknadId] = useState<Partial<Record<string, Vedtak>>>({});
+  const [vurderingStatusBySoknadId, setVurderingStatusBySoknadId] = useState<
+    Partial<Record<string, VurderingStatus>>
+  >({});
+  const [saksbehandlerVurderingBySoknadId, setSaksbehandlerVurderingBySoknadId] = useState<
+    Partial<Record<string, SaksbehandlerVurdering>>
+  >({});
+  const [manuellSakVarslet, setManuellSakVarslet] = useState(false);
+  const [manuellModalOpen, setManuellModalOpen] = useState(false);
+  const [manuellModalSoknadId, setManuellModalSoknadId] = useState<string | null>(null);
+  const [manuellResultat, setManuellResultat] = useState<SaksbehandlerResultat>(
+    'INNVILGET_FORELDREPENGER',
+  );
+  const [manuellBegrunnelse, setManuellBegrunnelse] = useState('');
 
-  const selectedSoknad = SOKNADER.find((soknad) => soknad.id === selectedId) ?? SOKNADER[0];
-  const localVedtak = useMemo(() => vurderLokalt(selectedSoknad), [selectedSoknad]);
-  const visibleVedtak = backendState.type === 'success' ? backendState.vedtak : localVedtak;
+  const soknader = soknaderState.type === 'success' ? soknaderState.soknader : TOM_SOKNADSLISTE;
+  const selectedSoknad = useMemo(
+    () => soknader.find((soknad) => soknad.id === selectedId) ?? soknader[0] ?? null,
+    [selectedId, soknader],
+  );
+  const visibleVedtak = selectedSoknad ? vedtakBySoknadId[selectedSoknad.id] : null;
+  const vurderingStatus = selectedSoknad ? vurderingStatusBySoknadId[selectedSoknad.id] : null;
+  const isVurderingLoading = vurderingStatus?.type === 'loading';
+  const vurderingErrorMessage = vurderingStatus?.type === 'error' ? vurderingStatus.message : null;
+  const antallVurdert = Object.keys(vedtakBySoknadId).length;
+  const selectedSaksbehandlerVurdering = selectedSoknad
+    ? saksbehandlerVurderingBySoknadId[selectedSoknad.id]
+    : null;
+  const vurderteVedtak = useMemo(
+    () => Object.values(vedtakBySoknadId).filter((vedtak): vedtak is Vedtak => Boolean(vedtak)),
+    [vedtakBySoknadId],
+  );
+  const ulosteManuelleVedtak = useMemo(
+    () =>
+      vurderteVedtak.filter(
+        (vedtak) =>
+          vedtak.type === 'MANUELL_VURDERING' && !saksbehandlerVurderingBySoknadId[vedtak.soknadId],
+      ),
+    [saksbehandlerVurderingBySoknadId, vurderteVedtak],
+  );
+  const forsteUlosteManuelleVedtak = ulosteManuelleVedtak[0] ?? null;
+  const sorterteSoknader = useMemo(() => {
+    const ulosteManuelleSoknadIder = new Set(ulosteManuelleVedtak.map((vedtak) => vedtak.soknadId));
 
-  const runBackendVurdering = async () => {
-    setBackendState({ type: 'loading' });
+    return [...soknader].sort(
+      (a, b) =>
+        Number(ulosteManuelleSoknadIder.has(b.id)) - Number(ulosteManuelleSoknadIder.has(a.id)),
+    );
+  }, [soknader, ulosteManuelleVedtak]);
+  const manuellModalSoknad = useMemo(
+    () => soknader.find((soknad) => soknad.id === manuellModalSoknadId) ?? null,
+    [manuellModalSoknadId, soknader],
+  );
+  const manuellModalVedtak = manuellModalSoknadId ? vedtakBySoknadId[manuellModalSoknadId] : null;
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function vurderSoknadAutomatisk(soknad: Soknad) {
+      setVurderingStatusBySoknadId((current) => ({
+        ...current,
+        [soknad.id]: { type: 'loading' },
+      }));
+
+      try {
+        const vedtak = await hentVedtak(soknad);
+
+        if (!isActive) {
+          return;
+        }
+
+        setVedtakBySoknadId((current) => ({ ...current, [soknad.id]: vedtak }));
+        setVurderingStatusBySoknadId((current) => {
+          const next = { ...current };
+          delete next[soknad.id];
+          return next;
+        });
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+
+        setVurderingStatusBySoknadId((current) => ({
+          ...current,
+          [soknad.id]: {
+            type: 'error',
+            message: error instanceof Error ? error.message : 'Ukjent feil fra backend',
+          },
+        }));
+      }
+    }
+
+    async function hentSoknader() {
+      try {
+        const response = await fetch('/api/foreldrepenger/soknader');
+
+        if (!response.ok) {
+          throw new Error(`Backend svarte med HTTP ${response.status}`);
+        }
+
+        const data = (await response.json()) as Soknad[];
+
+        if (!Array.isArray(data)) {
+          throw new Error('Backend returnerte ikke en liste med søknader');
+        }
+
+        if (!isActive) {
+          return;
+        }
+
+        setSoknaderState({ type: 'success', soknader: data });
+        setSelectedId(data[0]?.id ?? null);
+        setVedtakBySoknadId({});
+        setVurderingStatusBySoknadId({});
+        setSaksbehandlerVurderingBySoknadId({});
+        setManuellSakVarslet(false);
+        data.forEach((soknad) => {
+          void vurderSoknadAutomatisk(soknad);
+        });
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+
+        setSoknaderState({
+          type: 'error',
+          message: error instanceof Error ? error.message : 'Ukjent feil ved henting av søknader',
+        });
+      }
+    }
+
+    hentSoknader();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!forsteUlosteManuelleVedtak || manuellSakVarslet) {
+      return;
+    }
+
+    setSelectedId(forsteUlosteManuelleVedtak.soknadId);
+    setManuellSakVarslet(true);
+  }, [forsteUlosteManuelleVedtak, manuellSakVarslet]);
+
+  const oppdaterVurdering = async () => {
+    if (!selectedSoknad) {
+      return;
+    }
+
+    setVurderingStatusBySoknadId((current) => ({
+      ...current,
+      [selectedSoknad.id]: { type: 'loading' },
+    }));
 
     try {
-      const response = await fetch('/api/foreldrepenger/vurder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(selectedSoknad),
+      const vedtak = await hentVedtak(selectedSoknad);
+      setVedtakBySoknadId((current) => ({ ...current, [selectedSoknad.id]: vedtak }));
+      setVurderingStatusBySoknadId((current) => {
+        const next = { ...current };
+        delete next[selectedSoknad.id];
+        return next;
       });
-
-      if (!response.ok) {
-        throw new Error(`Backend svarte med HTTP ${response.status}`);
-      }
-
-      const vedtak = (await response.json()) as Vedtak;
-      setBackendState({ type: 'success', vedtak });
     } catch (error) {
-      setBackendState({
-        type: 'error',
-        message: error instanceof Error ? error.message : 'Ukjent feil fra backend',
-      });
+      setVurderingStatusBySoknadId((current) => ({
+        ...current,
+        [selectedSoknad.id]: {
+          type: 'error',
+          message: error instanceof Error ? error.message : 'Ukjent feil fra backend',
+        },
+      }));
     }
   };
 
+  const apneManuellBehandling = (soknadId: string) => {
+    const existing = saksbehandlerVurderingBySoknadId[soknadId];
+
+    setSelectedId(soknadId);
+    setManuellModalSoknadId(soknadId);
+    setManuellResultat(existing?.resultat ?? 'INNVILGET_FORELDREPENGER');
+    setManuellBegrunnelse(existing?.begrunnelse ?? '');
+    setManuellModalOpen(true);
+  };
+
+  const lukkManuellBehandling = () => {
+    setManuellModalOpen(false);
+    setManuellModalSoknadId(null);
+  };
+
+  const lagreManuellBehandling = () => {
+    if (!manuellModalSoknadId) {
+      return;
+    }
+
+    setSaksbehandlerVurderingBySoknadId((current) => ({
+      ...current,
+      [manuellModalSoknadId]: {
+        resultat: manuellResultat,
+        begrunnelse:
+          manuellBegrunnelse.trim() ||
+          'Saksbehandler har kontrollert saken og registrert manuell konklusjon.',
+      },
+    }));
+    lukkManuellBehandling();
+  };
+
   return (
-    <main className="fp-shell">
-      <header className="fp-header">
-        <div>
-          <Detail uppercase>Foreldrepenger</Detail>
-          <Heading size="large" level="1">
-            Saksbehandling
-          </Heading>
-        </div>
-        <div className="fp-header__tools">
-          <BackendStatus />
-          <ThemeToggle />
-        </div>
-      </header>
+    <VStack minHeight="100vh">
+      <InternalHeader>
+        <InternalHeader.Title as="h1">Foreldrepenger</InternalHeader.Title>
+        <Spacer />
+        <InternalHeader.User name="Sebastian Briglia Smedsrud" description="Saksbehandler" />
+      </InternalHeader>
 
-      <section className="fp-metrics" aria-label="Nøkkeltall">
-        <Metric label="Søknader" value={SOKNADER.length.toString()} />
-        <Metric label="Valgt sak" value={selectedSoknad.id} />
-        <Metric label="Foreløpig vedtak" value={formatVedtakType(visibleVedtak.type)} />
-      </section>
-
-      <div className="fp-layout">
-        <aside className="fp-sidebar" aria-label="Søknadsliste">
-          <div className="fp-section-heading">
-            <Heading size="small" level="2">
-              Søknader
+      <Box
+        as="main"
+        background="neutral-soft"
+        flexGrow="1"
+        padding={{ xs: 'space-12', md: 'space-16', lg: 'space-24' }}
+      >
+        <HStack
+          as="header"
+          align="start"
+          gap="space-16"
+          justify="space-between"
+          marginBlock="space-0 space-16"
+          marginInline="auto"
+          maxWidth="1420px"
+          wrap
+        >
+          <VStack gap="space-0">
+            <Detail uppercase>Saksbehandling</Detail>
+            <Heading size="large" level="2">
+              Søknader til automatisk vurdering
             </Heading>
-            <Tag size="small" variant="moderate">
-              Lokal testdata
-            </Tag>
-          </div>
-          <div className="fp-case-list">
-            {SOKNADER.map((soknad) => {
-              const vedtak = vurderLokalt(soknad);
-              const isSelected = soknad.id === selectedSoknad.id;
+          </VStack>
+        </HStack>
 
-              return (
-                <button
-                  className="fp-case-row"
-                  data-selected={isSelected}
-                  key={soknad.id}
-                  onClick={() => {
-                    setSelectedId(soknad.id);
-                    setBackendState({ type: 'idle' });
-                  }}
-                  type="button"
+        <HGrid
+          align="start"
+          aria-label="Nøkkeltall"
+          columns={{ xs: 1, md: 3 }}
+          gap="space-12"
+          marginBlock="space-0 space-16"
+          marginInline="auto"
+          maxWidth="1420px"
+          as="section"
+        >
+          <Metric
+            label="Søknader"
+            value={soknaderState.type === 'success' ? soknader.length.toString() : 'Laster'}
+          />
+          <Metric
+            label="Vurdert"
+            value={soknaderState.type === 'success' ? `${antallVurdert}/${soknader.length}` : '-'}
+          />
+          <Metric
+            label="Resultat"
+            value={
+              selectedSaksbehandlerVurdering
+                ? formatVedtakType(selectedSaksbehandlerVurdering.resultat)
+                : visibleVedtak
+                  ? formatVedtakType(visibleVedtak.type)
+                  : 'Ikke vurdert'
+            }
+          />
+        </HGrid>
+
+        {soknaderState.type === 'success' && forsteUlosteManuelleVedtak && (
+          <Box marginBlock="space-0 space-16" marginInline="auto" maxWidth="1420px">
+            <Alert variant="warning">
+              <HStack align="center" gap="space-12" justify="space-between" wrap>
+                <VStack gap="space-4">
+                  <Label>Manuell behandling kreves</Label>
+                  <BodyShort>
+                    Sak {formatSaksnummer(forsteUlosteManuelleVedtak.soknadId)} må vurderes av
+                    saksbehandler før saken kan avsluttes.
+                  </BodyShort>
+                </VStack>
+                <Button
+                  icon={<TasklistStartIcon aria-hidden />}
+                  onClick={() => setSelectedId(forsteUlosteManuelleVedtak.soknadId)}
+                  size="small"
+                  variant="secondary"
                 >
-                  <span>
-                    <span className="fp-case-row__id">{soknad.id}</span>
-                    <span className="fp-case-row__text">{soknad.beskrivelse}</span>
-                  </span>
-                  <VedtakTag type={vedtak.type} />
-                </button>
-              );
-            })}
-          </div>
-        </aside>
+                  Åpne saken
+                </Button>
+              </HStack>
+            </Alert>
+          </Box>
+        )}
 
-        <section className="fp-main" aria-label="Valgt søknad">
-          <div className="fp-main__top">
-            <div>
-              <Detail uppercase>{selectedSoknad.id}</Detail>
-              <Heading size="medium" level="2">
-                {selectedSoknad.beskrivelse}
-              </Heading>
-            </div>
-            <HStack gap="space-12" wrap>
-              <Button
-                icon={<CalculatorIcon aria-hidden />}
-                size="small"
-                variant="secondary"
-                onClick={() => setBackendState({ type: 'idle' })}
-              >
-                Lokal vurdering
-              </Button>
-              <Button
-                icon={<PaperplaneIcon aria-hidden />}
-                loading={backendState.type === 'loading'}
-                size="small"
-                onClick={runBackendVurdering}
-              >
-                Send til backend
-              </Button>
-            </HStack>
-          </div>
+        {soknaderState.type === 'loading' && (
+          <Surface ariaLive="polite" contentAlign="center" marginInline="auto" maxWidth="1420px">
+            <Loader size="medium" title="Henter søknader" />
+            <BodyShort>Henter søknader.</BodyShort>
+          </Surface>
+        )}
 
-          <div className="fp-content-grid">
-            <Panel className="fp-panel">
-              <Heading size="small" level="3">
-                Søknadsdata
-              </Heading>
-              <dl className="fp-facts">
-                <Fact label="Fødselsnummer" value={maskFnr(selectedSoknad.fnr)} />
-                <Fact label="Norsk borger" value={selectedSoknad.erNorskBorger ? 'Ja' : 'Nei'} />
-                <Fact label="Termindato" value={formatDate(selectedSoknad.termindato)} />
+        {soknaderState.type === 'error' && (
+          <Box marginInline="auto" maxWidth="1420px">
+            <Alert variant="error">Kunne ikke hente søknader. {soknaderState.message}</Alert>
+          </Box>
+        )}
+
+        {soknaderState.type === 'success' && !selectedSoknad && (
+          <Surface contentAlign="center" marginInline="auto" maxWidth="1420px">
+            <Heading size="small" level="2">
+              Ingen søknader funnet
+            </Heading>
+            <BodyShort>Det finnes ingen søknader å behandle akkurat nå.</BodyShort>
+          </Surface>
+        )}
+
+        {soknaderState.type === 'success' && selectedSoknad && (
+          <HGrid
+            align="start"
+            columns={{ xs: 1, lg: 'minmax(280px, 360px) minmax(0, 1fr)' }}
+            gap="space-16"
+            marginInline="auto"
+            maxWidth="1420px"
+          >
+            <Box
+              as="aside"
+              aria-label="Søknadsliste"
+              background="raised"
+              borderColor="neutral-subtle"
+              borderRadius="2"
+              borderWidth="1"
+              padding="space-16"
+            >
+              <VStack gap="space-12">
+                <HStack align="center" gap="space-12" justify="space-between">
+                  <Heading size="small" level="2">
+                    Saker
+                  </Heading>
+                  <Tag size="small" variant="neutral">
+                    {soknader.length}
+                  </Tag>
+                </HStack>
+                <VStack gap="space-8">
+                  {sorterteSoknader.map((soknad) => {
+                    const vedtak = vedtakBySoknadId[soknad.id];
+                    const status = vurderingStatusBySoknadId[soknad.id];
+                    const saksbehandlerVurdering = saksbehandlerVurderingBySoknadId[soknad.id];
+                    const isSelected = soknad.id === selectedSoknad.id;
+
+                    return (
+                      <Box
+                        as="button"
+                        background={isSelected ? 'accent-moderate' : 'default'}
+                        borderColor={isSelected ? 'accent' : 'neutral-subtle'}
+                        borderRadius="2"
+                        borderWidth="1"
+                        data-selected={isSelected}
+                        key={soknad.id}
+                        onClick={() => {
+                          setSelectedId(soknad.id);
+                        }}
+                        padding="space-12"
+                        type="button"
+                        width="100%"
+                      >
+                        <VStack align="stretch" gap="space-4">
+                          <HStack align="center" justify="space-between" gap="space-8">
+                            <Detail align="start" textColor="subtle">
+                              {formatSaksnummer(soknad.id)}
+                            </Detail>
+                            <CaseStatusTag
+                              status={status}
+                              vedtak={vedtak}
+                              saksbehandlerVurdering={saksbehandlerVurdering}
+                            />
+                          </HStack>
+                          <BodyShort align="start" weight="semibold">
+                            {formatSakstittel(soknad)}
+                          </BodyShort>
+                          <Detail align="start" textColor="subtle">
+                            {maskerFodselsnummer(soknad.fodselsnummer)} · Termin{' '}
+                            {formatDate(soknad.termindato)} ·{' '}
+                            {formatRettsforhold(soknad.rettsforhold)}
+                          </Detail>
+                        </VStack>
+                      </Box>
+                    );
+                  })}
+                </VStack>
+              </VStack>
+            </Box>
+
+            <VStack gap="space-16" as="section" aria-label="Valgt søknad">
+              <Box
+                background="raised"
+                borderColor="neutral-subtle"
+                borderRadius="2"
+                borderWidth="1"
+                padding="space-16"
+              >
+                <HStack align="start" gap="space-12" justify="space-between" wrap>
+                  <VStack gap="space-4" minWidth="0">
+                    <Detail uppercase>Valgt søknad</Detail>
+                    <HStack align="center" gap="space-8" wrap>
+                      <Heading size="medium" level="2">
+                        Sak {formatSaksnummer(selectedSoknad.id)}:{' '}
+                        {formatSakstittel(selectedSoknad)}
+                      </Heading>
+                      <CaseStatusTag
+                        status={vurderingStatus}
+                        vedtak={visibleVedtak}
+                        saksbehandlerVurdering={selectedSaksbehandlerVurdering}
+                      />
+                    </HStack>
+                    <BodyShort textColor="subtle">{formatSaksforklaring(selectedSoknad)}</BodyShort>
+                  </VStack>
+                  <HStack gap="space-12" wrap>
+                    {visibleVedtak?.type === 'MANUELL_VURDERING' && (
+                      <Button
+                        icon={<TasklistStartIcon aria-hidden />}
+                        onClick={() => apneManuellBehandling(selectedSoknad.id)}
+                        size="small"
+                        variant={selectedSaksbehandlerVurdering ? 'secondary' : 'primary'}
+                      >
+                        {selectedSaksbehandlerVurdering
+                          ? 'Endre manuell vurdering'
+                          : 'Start manuell behandling'}
+                      </Button>
+                    )}
+                    <Button
+                      icon={<RotateRightIcon aria-hidden />}
+                      loading={isVurderingLoading}
+                      size="small"
+                      onClick={oppdaterVurdering}
+                    >
+                      Oppdater vurdering
+                    </Button>
+                    {vurderingErrorMessage && (
+                      <Alert size="small" variant="warning">
+                        Kunne ikke kjøre automatisk vurdering. {vurderingErrorMessage}
+                      </Alert>
+                    )}
+                  </HStack>
+                </HStack>
+              </Box>
+
+              <HGrid
+                align="start"
+                columns={{ xs: 1, lg: 'minmax(330px, 0.95fr) minmax(420px, 1.05fr)' }}
+                gap="space-16"
+              >
+                <Surface>
+                  <Heading size="small" level="3">
+                    Søker og søknad
+                  </Heading>
+                  <FactGrid>
+                    <Fact
+                      label="Fødselsnummer"
+                      value={maskerFodselsnummer(selectedSoknad.fodselsnummer)}
+                    />
+                    <Fact
+                      label="Norsk borger"
+                      value={selectedSoknad.erNorskBorger ? 'Ja' : 'Nei'}
+                    />
+                    <Fact label="Termindato" value={formatDate(selectedSoknad.termindato)} />
+                    <Fact
+                      label="Oppgitt årsinntekt"
+                      value={formatCurrency(selectedSoknad.oppgittArsinntekt)}
+                    />
+                    <Fact label="Barn" value={selectedSoknad.antallBarn.toString()} />
+                    <Fact label="Rett" value={formatRettsforhold(selectedSoknad.rettsforhold)} />
+                    <Fact
+                      label="Dekningsgrad"
+                      value={formatDekningsgrad(selectedSoknad.dekningsgrad)}
+                    />
+                  </FactGrid>
+                </Surface>
+
+                <Surface>
+                  <HStack align="center" gap="space-12" justify="space-between" wrap>
+                    <Heading size="small" level="3">
+                      Vurdering
+                    </Heading>
+                    {visibleVedtak ? (
+                      <VedtakTag type={visibleVedtak.type} />
+                    ) : (
+                      <Tag size="small" variant="neutral">
+                        Ikke vurdert
+                      </Tag>
+                    )}
+                  </HStack>
+                  {visibleVedtak ? (
+                    <>
+                      <FactGrid compact>
+                        <Fact label="Saksnummer" value={formatSaksnummer(visibleVedtak.soknadId)} />
+                        <Fact label="Resultat" value={formatVedtakType(visibleVedtak.type)} />
+                        <Fact
+                          label="Regler vurdert"
+                          value={visibleVedtak.regelvurderinger.length.toString()}
+                        />
+                        <Fact
+                          label="Behandling"
+                          value={
+                            selectedSaksbehandlerVurdering
+                              ? 'Vurdert av saksbehandler'
+                              : visibleVedtak.type === 'MANUELL_VURDERING'
+                                ? 'Må behandles manuelt'
+                                : 'Automatisk vurdert'
+                          }
+                        />
+                      </FactGrid>
+                      {visibleVedtak.type === 'MANUELL_VURDERING' &&
+                        (selectedSaksbehandlerVurdering ? (
+                          <Alert variant="success">
+                            <VStack gap="space-4">
+                              <Label>Manuell vurdering er registrert</Label>
+                              <BodyShort>
+                                Konklusjon:{' '}
+                                {formatVedtakType(selectedSaksbehandlerVurdering.resultat)}.
+                              </BodyShort>
+                              <BodyShort>{selectedSaksbehandlerVurdering.begrunnelse}</BodyShort>
+                            </VStack>
+                          </Alert>
+                        ) : (
+                          <Alert variant="warning">
+                            Saken venter på manuell konklusjon fra saksbehandler.
+                          </Alert>
+                        ))}
+                      <BodyLong>{formatSynligTekst(visibleVedtak.begrunnelse)}</BodyLong>
+                    </>
+                  ) : (
+                    <BodyLong>
+                      {isVurderingLoading
+                        ? 'Automatisk vurdering kjøres.'
+                        : 'Vurderingen er ikke klar ennå.'}
+                    </BodyLong>
+                  )}
+                </Surface>
+              </HGrid>
+
+              {visibleVedtak && (
+                <HGrid align="start" columns={{ xs: 1, lg: 3 }} gap="space-16">
+                  {visibleVedtak.beregningsgrunnlag && (
+                    <Surface>
+                      <Heading size="small" level="3">
+                        Beregningsgrunnlag
+                      </Heading>
+                      <FactGrid compact>
+                        <Fact
+                          label="Årssats"
+                          value={formatCurrency(visibleVedtak.beregningsgrunnlag.arssats)}
+                        />
+                        <Fact
+                          label="Oppgitt årsinntekt"
+                          value={formatCurrency(visibleVedtak.beregningsgrunnlag.oppgittArsinntekt)}
+                        />
+                        <Fact
+                          label="Avvik"
+                          value={formatAvvik(visibleVedtak.beregningsgrunnlag.avvikProsent)}
+                        />
+                        <Fact
+                          label="Grunnlag"
+                          value={formatOptionalCurrency(
+                            visibleVedtak.beregningsgrunnlag.grunnlagBelop,
+                          )}
+                        />
+                        <Fact
+                          label="Manuell vurdering"
+                          value={formatJaNei(
+                            visibleVedtak.beregningsgrunnlag.kreverManuellVurdering,
+                          )}
+                        />
+                      </FactGrid>
+                    </Surface>
+                  )}
+
+                  {visibleVedtak.stonadsperiode && (
+                    <Surface>
+                      <Heading size="small" level="3">
+                        Stønadsperiode
+                      </Heading>
+                      <FactGrid compact>
+                        <Fact
+                          label="Total periode"
+                          value={`${visibleVedtak.stonadsperiode.totalUker} uker`}
+                        />
+                        <Fact
+                          label="Rett"
+                          value={formatRettsforhold(visibleVedtak.stonadsperiode.rettsforhold)}
+                        />
+                        <Fact
+                          label="Barn"
+                          value={visibleVedtak.stonadsperiode.antallBarn.toString()}
+                        />
+                        <Fact
+                          label="Dekningsgrad"
+                          value={formatDekningsgrad(visibleVedtak.stonadsperiode.dekningsgrad)}
+                        />
+                      </FactGrid>
+                    </Surface>
+                  )}
+
+                  {visibleVedtak.kvoter && (
+                    <Surface>
+                      <Heading size="small" level="3">
+                        Kvotefordeling
+                      </Heading>
+                      <FactGrid compact>
+                        <Fact
+                          label="Mødrekvote"
+                          value={`${visibleVedtak.kvoter.modrekvote} uker`}
+                        />
+                        <Fact
+                          label="Fedrekvote"
+                          value={`${visibleVedtak.kvoter.fedrekvote} uker`}
+                        />
+                        <Fact
+                          label="Fellesperiode"
+                          value={`${visibleVedtak.kvoter.fellesperiode} uker`}
+                        />
+                        <Fact
+                          label="Forhåndskvote mor"
+                          value={`${visibleVedtak.kvoter.forhandskvoteMor} uker`}
+                        />
+                        <Fact
+                          label="Flerbarnsbonus"
+                          value={`${visibleVedtak.kvoter.flerbarnsbonus} uker`}
+                        />
+                        <Fact label="Sum" value={`${visibleVedtak.kvoter.totalUker} uker`} />
+                      </FactGrid>
+                    </Surface>
+                  )}
+                </HGrid>
+              )}
+
+              {visibleVedtak && (
+                <Surface>
+                  <HStack align="center" gap="space-12" justify="space-between" wrap>
+                    <Heading size="small" level="3">
+                      Regelvurderinger
+                    </Heading>
+                    <Tag size="small" variant="moderate">
+                      {visibleVedtak.regelvurderinger.length} regler
+                    </Tag>
+                  </HStack>
+                  <Box overflowX="auto">
+                    <Table size="small" zebraStripes>
+                      <Table.Header>
+                        <Table.Row>
+                          <Table.HeaderCell scope="col">Regel</Table.HeaderCell>
+                          <Table.HeaderCell scope="col">Resultat</Table.HeaderCell>
+                          <Table.HeaderCell scope="col">Begrunnelse</Table.HeaderCell>
+                        </Table.Row>
+                      </Table.Header>
+                      <Table.Body>
+                        {visibleVedtak.regelvurderinger.map((regel) => (
+                          <Table.Row key={regel.regel}>
+                            <Table.HeaderCell scope="row">{regel.regel}</Table.HeaderCell>
+                            <Table.DataCell>
+                              <RegelResultatTag resultat={regel.resultat} />
+                            </Table.DataCell>
+                            <Table.DataCell>{formatSynligTekst(regel.begrunnelse)}</Table.DataCell>
+                          </Table.Row>
+                        ))}
+                      </Table.Body>
+                    </Table>
+                  </Box>
+                </Surface>
+              )}
+
+              <Surface>
+                <HStack align="center" gap="space-12" justify="space-between" wrap>
+                  <Heading size="small" level="3">
+                    Inntektshistorikk
+                  </Heading>
+                  <Tag size="small" variant="moderate">
+                    {selectedSoknad.inntektshistorikk.length} måneder
+                  </Tag>
+                </HStack>
+                <Box overflowX="auto">
+                  <Table size="small" zebraStripes>
+                    <Table.Header>
+                      <Table.Row>
+                        <Table.HeaderCell scope="col">Måned</Table.HeaderCell>
+                        <Table.HeaderCell scope="col">Type</Table.HeaderCell>
+                        <Table.HeaderCell scope="col">Beløp</Table.HeaderCell>
+                        <Table.HeaderCell scope="col">Godkjent</Table.HeaderCell>
+                      </Table.Row>
+                    </Table.Header>
+                    <Table.Body>
+                      {selectedSoknad.inntektshistorikk.map((inntekt) => (
+                        <Table.Row key={`${inntekt.maned}-${inntekt.type}-${inntekt.belop}`}>
+                          <Table.HeaderCell scope="row">{inntekt.maned}</Table.HeaderCell>
+                          <Table.DataCell>{formatInntektstype(inntekt.type)}</Table.DataCell>
+                          <Table.DataCell>{formatCurrency(inntekt.belop)}</Table.DataCell>
+                          <Table.DataCell>
+                            {GODKJENTE_INNTEKTSTYPER.includes(inntekt.type) ? 'Ja' : 'Nei'}
+                          </Table.DataCell>
+                        </Table.Row>
+                      ))}
+                    </Table.Body>
+                  </Table>
+                </Box>
+              </Surface>
+            </VStack>
+          </HGrid>
+        )}
+      </Box>
+
+      <Modal
+        header={{
+          heading: 'Manuell behandling',
+          label: manuellModalSoknad ? `Sak ${formatSaksnummer(manuellModalSoknad.id)}` : undefined,
+          size: 'small',
+        }}
+        onClose={lukkManuellBehandling}
+        open={manuellModalOpen}
+        placement="top"
+        width="medium"
+      >
+        <Modal.Body>
+          {manuellModalSoknad && manuellModalVedtak ? (
+            <VStack gap="space-16">
+              <Alert variant="warning">{formatSynligTekst(manuellModalVedtak.begrunnelse)}</Alert>
+              <FactGrid compact>
+                <Fact label="Saksnummer" value={formatSaksnummer(manuellModalSoknad.id)} />
+                <Fact
+                  label="Fødselsnummer"
+                  value={maskerFodselsnummer(manuellModalSoknad.fodselsnummer)}
+                />
                 <Fact
                   label="Oppgitt årsinntekt"
-                  value={formatCurrency(selectedSoknad.oppgittArsinntekt)}
+                  value={formatCurrency(manuellModalSoknad.oppgittArsinntekt)}
                 />
-                <Fact label="Barn" value={selectedSoknad.antallBarn.toString()} />
-                <Fact label="Rett" value={formatRettsforhold(selectedSoknad.rettsforhold)} />
                 <Fact
-                  label="Dekningsgrad"
-                  value={formatDekningsgrad(selectedSoknad.dekningsgrad)}
+                  label="Beregnet årsinntekt"
+                  value={formatOptionalCurrency(
+                    manuellModalVedtak.beregningsgrunnlag?.arssats ?? null,
+                  )}
                 />
-              </dl>
-            </Panel>
-
-            <Panel className="fp-panel fp-panel--result">
-              <div className="fp-result-title">
-                <Heading size="small" level="3">
-                  Vedtak
-                </Heading>
-                <VedtakTag type={visibleVedtak.type} />
-              </div>
-              <BodyLong>{visibleVedtak.begrunnelse}</BodyLong>
-              <div className="fp-rule-list">
-                {visibleVedtak.regelvurderinger.map((regel) => (
-                  <div className="fp-rule" key={regel.regel}>
-                    <ResultIcon resultat={regel.resultat} />
-                    <div>
-                      <Label>{regel.regel}</Label>
-                      <BodyShort size="small">{regel.begrunnelse}</BodyShort>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Panel>
-          </div>
-
-          <Panel className="fp-panel">
-            <div className="fp-section-heading">
-              <Heading size="small" level="3">
-                Inntektshistorikk
-              </Heading>
-              <Tag size="small" variant="moderate">
-                Siste {OPPTJENINGSPERIODE} måneder
-              </Tag>
-            </div>
-            <div className="fp-table-wrap">
-              <Table size="small" zebraStripes>
-                <Table.Header>
-                  <Table.Row>
-                    <Table.HeaderCell scope="col">Måned</Table.HeaderCell>
-                    <Table.HeaderCell scope="col">Type</Table.HeaderCell>
-                    <Table.HeaderCell scope="col">Beløp</Table.HeaderCell>
-                    <Table.HeaderCell scope="col">Godkjent</Table.HeaderCell>
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {selectedSoknad.inntektshistorikk.map((inntekt) => (
-                    <Table.Row key={`${inntekt.maned}-${inntekt.type}-${inntekt.belop}`}>
-                      <Table.HeaderCell scope="row">{inntekt.maned}</Table.HeaderCell>
-                      <Table.DataCell>{formatInntektstype(inntekt.type)}</Table.DataCell>
-                      <Table.DataCell>{formatCurrency(inntekt.belop)}</Table.DataCell>
-                      <Table.DataCell>
-                        {GODKJENTE_INNTEKTSTYPER.includes(inntekt.type) ? 'Ja' : 'Nei'}
-                      </Table.DataCell>
-                    </Table.Row>
-                  ))}
-                </Table.Body>
-              </Table>
-            </div>
-          </Panel>
-
-          <Panel className="fp-panel">
-            <div className="fp-section-heading">
-              <Heading size="small" level="3">
-                Backend
-              </Heading>
-              <BackendStateTag state={backendState} />
-            </div>
-
-            {backendState.type === 'loading' && (
-              <div className="fp-loading">
-                <Loader size="small" title="Venter på backend" />
-                <BodyShort>Venter på backend</BodyShort>
-              </div>
-            )}
-
-            {backendState.type === 'error' && (
-              <Alert size="small" variant="warning">
-                {backendState.message}
-              </Alert>
-            )}
-
-            {backendState.type === 'success' && (
-              <Alert size="small" variant="success">
-                Backend returnerte et vedtak for {backendState.vedtak.soknadId}.
-              </Alert>
-            )}
-
-            {backendState.type === 'idle' && (
-              <Alert size="small" variant="info">
-                Viser lokal forhåndsvurdering.
-              </Alert>
-            )}
-
-            <Textarea
-              label="Request"
-              minRows={8}
-              readOnly
-              value={JSON.stringify(selectedSoknad, null, 2)}
-            />
-          </Panel>
-        </section>
-      </div>
-    </main>
+                <Fact
+                  label="Avvik"
+                  value={formatAvvik(manuellModalVedtak.beregningsgrunnlag?.avvikProsent ?? null)}
+                />
+                <Fact label="Rett" value={formatRettsforhold(manuellModalSoknad.rettsforhold)} />
+              </FactGrid>
+              <RadioGroup
+                legend="Saksbehandlers konklusjon"
+                onChange={(value) => setManuellResultat(value as SaksbehandlerResultat)}
+                value={manuellResultat}
+              >
+                <Radio value="INNVILGET_FORELDREPENGER">Innvilg foreldrepenger</Radio>
+                <Radio value="ENGANGSSTONAD">Innvilg engangsstønad</Radio>
+                <Radio value="AVSLAG">Avslag</Radio>
+              </RadioGroup>
+              <Textarea
+                label="Begrunnelse"
+                maxLength={500}
+                minRows={4}
+                onChange={(event) => setManuellBegrunnelse(event.target.value)}
+                value={manuellBegrunnelse}
+              />
+            </VStack>
+          ) : (
+            <BodyLong>Ingen manuell sak er valgt.</BodyLong>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button icon={<FileCheckmarkIcon aria-hidden />} onClick={lagreManuellBehandling}>
+            Lagre vurdering
+          </Button>
+          <Button onClick={lukkManuellBehandling} variant="secondary">
+            Avbryt
+          </Button>
+        </Modal.Footer>
+      </Modal>
+    </VStack>
   );
 }
 
 function Metric({ label, value }: Readonly<{ label: string; value: string }>) {
   return (
-    <div className="fp-metric">
+    <Box
+      background="raised"
+      borderColor="neutral-subtle"
+      borderRadius="2"
+      borderWidth="1"
+      minHeight="78px"
+      padding="space-16"
+    >
       <Detail uppercase>{label}</Detail>
       <Heading size="medium" level="2">
         {value}
       </Heading>
-    </div>
+    </Box>
+  );
+}
+
+function Surface({
+  children,
+  ariaLive,
+  contentAlign = 'stretch',
+  marginInline,
+  maxWidth,
+}: Readonly<{
+  children: ReactNode;
+  ariaLive?: 'off' | 'polite' | 'assertive';
+  contentAlign?: 'start' | 'center' | 'end' | 'stretch';
+  marginInline?: 'auto';
+  maxWidth?: string;
+}>) {
+  return (
+    <Box
+      background="raised"
+      borderColor="neutral-subtle"
+      borderRadius="2"
+      borderWidth="1"
+      padding="space-16"
+      aria-live={ariaLive}
+      marginInline={marginInline}
+      maxWidth={maxWidth}
+    >
+      <VStack align={contentAlign} gap="space-16">
+        {children}
+      </VStack>
+    </Box>
+  );
+}
+
+function FactGrid({
+  children,
+  compact = false,
+}: Readonly<{ children: ReactNode; compact?: boolean }>) {
+  return (
+    <HGrid
+      as="dl"
+      columns={{
+        xs: 1,
+        md: compact
+          ? 'minmax(150px, 0.75fr) minmax(0, 1.25fr)'
+          : 'minmax(140px, 0.75fr) minmax(0, 1.25fr)',
+      }}
+      gap={compact ? 'space-8 space-16' : 'space-12 space-16'}
+      margin="space-0"
+    >
+      {children}
+    </HGrid>
   );
 }
 
 function Fact({ label, value }: Readonly<{ label: string; value: string }>) {
   return (
     <>
-      <dt>{label}</dt>
-      <dd>{value}</dd>
+      <Box as="dt">
+        <Detail as="span">{label}</Detail>
+      </Box>
+      <Box as="dd" margin="space-0" minWidth="0">
+        <Label as="span" size="small">
+          {value}
+        </Label>
+      </Box>
     </>
   );
 }
@@ -421,150 +1049,69 @@ function VedtakTag({ type }: Readonly<{ type: VedtakType }>) {
   );
 }
 
-function BackendStateTag({ state }: Readonly<{ state: BackendState }>) {
-  if (state.type === 'loading') {
-    return (
-      <Tag size="small" variant="info">
-        Sender
-      </Tag>
-    );
-  }
-
-  if (state.type === 'success') {
+function CaseStatusTag({
+  saksbehandlerVurdering,
+  status,
+  vedtak,
+}: Readonly<{
+  saksbehandlerVurdering?: SaksbehandlerVurdering | null;
+  status?: VurderingStatus | null;
+  vedtak?: Vedtak | null;
+}>) {
+  if (saksbehandlerVurdering) {
     return (
       <Tag size="small" variant="success">
-        Backend
+        Vurdert manuelt
       </Tag>
     );
   }
 
-  if (state.type === 'error') {
+  if (vedtak) {
+    return <VedtakTag type={vedtak.type} />;
+  }
+
+  if (status?.type === 'loading') {
     return (
-      <Tag size="small" variant="warning">
-        Ikke tilgjengelig
+      <Tag size="small" variant="moderate">
+        Vurderes
+      </Tag>
+    );
+  }
+
+  if (status?.type === 'error') {
+    return (
+      <Tag size="small" variant="error">
+        Feil
       </Tag>
     );
   }
 
   return (
     <Tag size="small" variant="neutral">
-      Lokal
+      Ikke vurdert
     </Tag>
   );
 }
 
-function ResultIcon({ resultat }: Readonly<{ resultat: Regelresultat }>) {
-  if (resultat === 'OPPFYLT') {
-    return <CheckmarkCircleIcon aria-hidden className="fp-rule__icon fp-rule__icon--success" />;
-  }
-
-  if (resultat === 'IKKE_OPPFYLT') {
-    return <XMarkOctagonIcon aria-hidden className="fp-rule__icon fp-rule__icon--error" />;
-  }
+function RegelResultatTag({ resultat }: Readonly<{ resultat: Regelresultat }>) {
+  const variant =
+    resultat === 'OPPFYLT'
+      ? 'success'
+      : resultat === 'IKKE_OPPFYLT'
+        ? 'error'
+        : resultat === 'MANUELL_VURDERING'
+          ? 'warning'
+          : 'neutral';
 
   return (
-    <Tooltip content="Manuell vurdering">
-      <FileSearchIcon aria-hidden className="fp-rule__icon fp-rule__icon--warning" />
-    </Tooltip>
+    <Tag size="small" variant={variant}>
+      {formatRegelresultat(resultat)}
+    </Tag>
   );
 }
 
-function vurderLokalt(soknad: Soknad): Vedtak {
-  const opptjeningsperiode = soknad.inntektshistorikk
-    .toSorted((a, b) => a.maned.localeCompare(b.maned))
-    .slice(-OPPTJENINGSPERIODE);
-  const godkjentInntekt = opptjeningsperiode.filter(
-    (inntekt) => GODKJENTE_INNTEKTSTYPER.includes(inntekt.type) && inntekt.belop > 0,
-  );
-  const godkjenteManeder = new Set(godkjentInntekt.map((inntekt) => inntekt.maned)).size;
-  const annualisertInntekt = Math.round(
-    (godkjentInntekt.reduce((sum, inntekt) => sum + inntekt.belop, 0) * 12) / OPPTJENINGSPERIODE,
-  );
-  const harNokManeder = godkjenteManeder >= KRAV_TIL_MANEDER;
-  const harNokInntekt = annualisertInntekt >= HALV_G_2025;
-  const opptjeningOppfylt = soknad.erNorskBorger && harNokManeder && harNokInntekt;
-
-  const regelvurderinger: Regelvurdering[] = [
-    {
-      regel: 'Medlemskap i folketrygden',
-      resultat: soknad.erNorskBorger ? 'OPPFYLT' : 'IKKE_OPPFYLT',
-      begrunnelse: soknad.erNorskBorger
-        ? 'Søker er norsk borger i testdataene.'
-        : 'Søker er ikke norsk borger i testdataene.',
-    },
-    {
-      regel: 'Opptjening 6 av 10 måneder',
-      resultat: harNokManeder ? 'OPPFYLT' : 'IKKE_OPPFYLT',
-      begrunnelse: `${godkjenteManeder} av ${OPPTJENINGSPERIODE} måneder har godkjent inntekt.`,
-    },
-    {
-      regel: 'Inntekt over 1/2G',
-      resultat: harNokInntekt ? 'OPPFYLT' : 'IKKE_OPPFYLT',
-      begrunnelse: `Annualisert inntekt er ${formatCurrency(annualisertInntekt)}. Kravet er ${formatCurrency(HALV_G_2025)}.`,
-    },
-  ];
-
-  if (opptjeningOppfylt) {
-    return {
-      id: `vedtak-${soknad.id}`,
-      soknadId: soknad.id,
-      type: 'INNVILGET_FORELDREPENGER',
-      tittel: 'Innvilget foreldrepenger',
-      begrunnelse: 'Søknaden oppfyller den lokale forhåndsvurderingen for foreldrepenger.',
-      regelvurderinger,
-    };
-  }
-
-  if (soknad.erNorskBorger) {
-    return {
-      id: `vedtak-${soknad.id}`,
-      soknadId: soknad.id,
-      type: 'ENGANGSSTONAD',
-      tittel: 'Innvilget engangsstønad',
-      begrunnelse: 'Opptjeningskravet er ikke oppfylt, men søker kan vurderes for engangsstønad.',
-      regelvurderinger: [
-        ...regelvurderinger,
-        {
-          regel: 'Engangsstønad',
-          resultat: 'OPPFYLT',
-          begrunnelse: 'Søker oppfyller forenklet medlemskapskrav.',
-        },
-      ],
-    };
-  }
-
-  return {
-    id: `vedtak-${soknad.id}`,
-    soknadId: soknad.id,
-    type: 'AVSLAG',
-    tittel: 'Avslag',
-    begrunnelse: 'Søker oppfyller verken vilkårene for foreldrepenger eller engangsstønad.',
-    regelvurderinger: [
-      ...regelvurderinger,
-      {
-        regel: 'Engangsstønad',
-        resultat: 'IKKE_OPPFYLT',
-        begrunnelse: 'Søker oppfyller ikke forenklet medlemskapskrav.',
-      },
-    ],
-  };
-}
-
-function lagInntektshistorikk(
-  type: Inntektstype,
-  belop: number,
-  antallManeder = OPPTJENINGSPERIODE,
-  startManed = 1,
-): Inntektsregistrering[] {
-  return Array.from({ length: antallManeder }, (_, index) => ({
-    maned: `2026-${(startManed + index).toString().padStart(2, '0')}`,
-    type,
-    belop,
-  }));
-}
-
-function maskFnr(fnr: string) {
-  return `${fnr.slice(0, 6)}*****`;
+function maskerFodselsnummer(fodselsnummer: string) {
+  return `${fodselsnummer.slice(0, 6)}*****`;
 }
 
 function formatCurrency(value: number) {
@@ -579,15 +1126,72 @@ function formatDate(value: string) {
   return new Intl.DateTimeFormat('nb-NO').format(new Date(value));
 }
 
+function formatSaksnummer(id: string) {
+  const match = id.match(/fp-(\d+)/i);
+
+  return match ? `FP-${match[1]}` : id.toUpperCase();
+}
+
+function formatSakstittel(soknad: Soknad) {
+  return SAKSTITLER[soknad.id] ?? formatSakstittelFraBeskrivelse(soknad.beskrivelse);
+}
+
+function formatSaksforklaring(soknad: Soknad) {
+  return SAKSFORKLARINGER[soknad.id] ?? formatSynligTekst(soknad.beskrivelse);
+}
+
+function formatSakstittelFraBeskrivelse(value: string) {
+  const title = value
+    .replace(/^Happy path:\s*/i, '')
+    .split(/[—→]/)[0]
+    .trim();
+
+  return truncate(title || value, 84);
+}
+
+function formatSynligTekst(value: string) {
+  return value
+    .replace(/\bSoker\b/g, 'Søker')
+    .replace(/\bsoker\b/g, 'søker')
+    .replace(/\bma\b/g, 'må')
+    .replace(/\bfa\b/g, 'få')
+    .replace(/\bmaneder\b/g, 'måneder')
+    .replace(/\bvilkarene\b/g, 'vilkårene')
+    .replace(/\bvilkar\b/g, 'vilkår')
+    .replace(/\barssats\b/g, 'årssats')
+    .replace(/\bstonadsperiode\b/g, 'stønadsperiode')
+    .replace(/\bengangsstonad\b/g, 'engangsstønad')
+    .replace(/\bannualisert\b/g, 'beregnet årsinntekt');
+}
+
+function truncate(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength - 1).trim()}…`;
+}
+
 function formatVedtakType(type: VedtakType) {
   const labels: Record<VedtakType, string> = {
     AVSLAG: 'Avslag',
     ENGANGSSTONAD: 'Engangsstønad',
     INNVILGET_FORELDREPENGER: 'Foreldrepenger',
-    MANUELL_VURDERING: 'Manuell',
+    MANUELL_VURDERING: 'Manuell behandling',
   };
 
   return labels[type];
+}
+
+function formatRegelresultat(resultat: Regelresultat) {
+  const labels: Record<Regelresultat, string> = {
+    IKKE_AKTUELL: 'Ikke aktuell',
+    IKKE_OPPFYLT: 'Ikke oppfylt',
+    MANUELL_VURDERING: 'Manuell vurdering',
+    OPPFYLT: 'Oppfylt',
+  };
+
+  return labels[resultat];
 }
 
 function formatRettsforhold(value: Rettsforhold) {
@@ -602,6 +1206,22 @@ function formatRettsforhold(value: Rettsforhold) {
 
 function formatDekningsgrad(value: Dekningsgrad) {
   return value === 'HUNDRE_PROSENT' ? '100 prosent' : '80 prosent';
+}
+
+function formatAvvik(value: number | null) {
+  if (value === null) {
+    return 'Ikke beregnet';
+  }
+
+  return `${new Intl.NumberFormat('nb-NO', { maximumFractionDigits: 1 }).format(value)} prosent`;
+}
+
+function formatOptionalCurrency(value: number | null) {
+  return value === null ? 'Ikke beregnet' : formatCurrency(value);
+}
+
+function formatJaNei(value: boolean) {
+  return value ? 'Ja' : 'Nei';
 }
 
 function formatInntektstype(value: Inntektstype) {
