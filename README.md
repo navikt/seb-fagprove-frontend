@@ -99,6 +99,8 @@ I `next.config.ts` blir `/api/:path*` sendt videre til backend:
 
 Dette gjør at frontend-koden kan bruke samme `/api/...`-sti lokalt og i NAIS dev.
 
+I NAIS dev blir `BACKEND_URL` sendt inn under Docker-builden fra GitHub Actions. Dette er nødvendig fordi Next.js bruker `next.config.ts` under bygging av frontend-image. Det gjør at deployet frontend-image peker på backend-service i dev, ikke på en lokal backend-adresse.
+
 ## Bygg og kvalitetssjekk
 
 ```bash
@@ -157,6 +159,8 @@ Prosjektet deployes bare til dev i fagprøven.
 Dev deployes ved push til `main` eller manuelt fra GitHub Actions.
 
 Repoet må være autorisert i Nais Console for teamet `laerlinger`.
+
+Frontend trenger at `seb-fagprove-backend-dev` er deployet og kjører i dev. Backend må kunne hente søknader fra DigiSIS API-et, ellers vil frontend vise feilmelding når søknadene lastes.
 
 ## Avgrensninger
 
