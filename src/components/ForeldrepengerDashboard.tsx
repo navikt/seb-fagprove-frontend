@@ -602,18 +602,21 @@ export function ForeldrepengerDashboard() {
                           : 'Start manuell behandling'}
                       </Button>
                     )}
-                    <Button
-                      icon={<RotateRightIcon aria-hidden />}
-                      loading={isVurderingLoading}
-                      size="small"
-                      onClick={oppdaterVurdering}
-                    >
-                      Oppdater vurdering
-                    </Button>
                     {vurderingErrorMessage && (
-                      <Alert size="small" variant="warning">
-                        Kunne ikke kjøre automatisk vurdering. {vurderingErrorMessage}
-                      </Alert>
+                      <>
+                        <Button
+                          icon={<RotateRightIcon aria-hidden />}
+                          loading={isVurderingLoading}
+                          size="small"
+                          variant="secondary"
+                          onClick={oppdaterVurdering}
+                        >
+                          Prøv igjen
+                        </Button>
+                        <Alert size="small" variant="warning">
+                          Kunne ikke kjøre automatisk vurdering. {vurderingErrorMessage}
+                        </Alert>
+                      </>
                     )}
                   </HStack>
                 </HStack>
