@@ -6,6 +6,6 @@ import prettier from 'eslint-config-prettier';
 export default defineConfig([
   ...nextVitals,
   ...nextTs,
-  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts', 'public/mockServiceWorker.js']),
+  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts']),
   prettier,
 ]);

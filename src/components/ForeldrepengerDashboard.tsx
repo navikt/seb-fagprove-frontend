@@ -23,152 +23,44 @@ import {
   VStack,
 } from '@navikt/ds-react';
 import { FileCheckmarkIcon, RotateRightIcon, TasklistStartIcon } from '@navikt/aksel-icons';
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
-
-type Inntektstype =
-  | 'ARBEID'
-  | 'SYKEPENGER'
-  | 'FORELDREPENGER'
-  | 'SVANGERSKAPSPENGER'
-  | 'DAGPENGER'
-  | 'AAP'
-  | 'PLEIEPENGER'
-  | 'STIPEND_LANEKASSEN';
-
-type Rettsforhold = 'BEGGE' | 'KUN_MOR' | 'KUN_FAR';
-type Dekningsgrad = 'HUNDRE_PROSENT' | 'ATTI_PROSENT';
-type Regelresultat = 'OPPFYLT' | 'IKKE_OPPFYLT' | 'IKKE_AKTUELL' | 'MANUELL_VURDERING';
-type VedtakType = 'INNVILGET_FORELDREPENGER' | 'ENGANGSSTONAD' | 'AVSLAG' | 'MANUELL_VURDERING';
-
-type Inntektsregistrering = {
-  maned: string;
-  type: Inntektstype;
-  belop: number;
-};
-
-type Soknad = {
-  id: string;
-  beskrivelse: string;
-  fodselsnummer: string;
-  erNorskBorger: boolean;
-  termindato: string;
-  oppgittArsinntekt: number;
-  inntektshistorikk: Inntektsregistrering[];
-  antallBarn: number;
-  rettsforhold: Rettsforhold;
-  dekningsgrad: Dekningsgrad;
-};
-
-type Regelvurdering = {
-  regel: string;
-  resultat: Regelresultat;
-  begrunnelse: string;
-};
-
-type Beregningsgrunnlag = {
-  arssats: number;
-  oppgittArsinntekt: number;
-  avvikProsent: number | null;
-  grunnlagBelop: number | null;
-  kreverManuellVurdering: boolean;
-};
-
-type Stonadsperiode = {
-  totalUker: number;
-  rettsforhold: Rettsforhold;
-  antallBarn: number;
-  dekningsgrad: Dekningsgrad;
-};
-
-type Kvoter = {
-  modrekvote: number;
-  fedrekvote: number;
-  fellesperiode: number;
-  forhandskvoteMor: number;
-  flerbarnsbonus: number;
-  totalUker: number;
-};
-
-type Vedtak = {
-  id: string;
-  soknadId: string;
-  type: VedtakType;
-  tittel: string;
-  begrunnelse: string;
-  regelvurderinger: Regelvurdering[];
-  beregningsgrunnlag?: Beregningsgrunnlag | null;
-  stonadsperiode?: Stonadsperiode | null;
-  kvoter?: Kvoter | null;
-};
-
-type SoknaderState =
-  | { type: 'loading' }
-  | { type: 'success'; soknader: Soknad[] }
-  | { type: 'error'; message: string };
-
-type VurderingStatus = { type: 'loading' } | { type: 'error'; message: string };
-type SaksbehandlerResultat = Exclude<VedtakType, 'MANUELL_VURDERING'>;
-
-type SaksbehandlerVurdering = {
-  resultat: SaksbehandlerResultat;
-  begrunnelse: string;
-};
-
-const GODKJENTE_INNTEKTSTYPER: Inntektstype[] = [
-  'ARBEID',
-  'SYKEPENGER',
-  'FORELDREPENGER',
-  'SVANGERSKAPSPENGER',
-  'DAGPENGER',
-  'AAP',
-  'PLEIEPENGER',
-];
+import { useEffect, useMemo, useState } from 'react';
+import {
+  CaseStatusTag,
+  Fact,
+  FactGrid,
+  Metric,
+  RegelResultatTag,
+  Surface,
+  VedtakTag,
+} from '@/components/foreldrepenger/ForeldrepengerUi';
+import { hentSoknader, hentVedtak } from '@/lib/foreldrepengerApi';
+import {
+  GODKJENTE_INNTEKTSTYPER,
+  formatAvvik,
+  formatCurrency,
+  formatDate,
+  formatDekningsgrad,
+  formatInntektstype,
+  formatJaNei,
+  formatOptionalCurrency,
+  formatRettsforhold,
+  formatSaksforklaring,
+  formatSaksnummer,
+  formatSakstittel,
+  formatSynligTekst,
+  formatVedtakType,
+  maskerFodselsnummer,
+} from '@/lib/foreldrepengerFormat';
+import type {
+  SaksbehandlerResultat,
+  SaksbehandlerVurdering,
+  Soknad,
+  SoknaderState,
+  Vedtak,
+  VurderingStatus,
+} from '@/types/foreldrepenger';
 
 const TOM_SOKNADSLISTE: Soknad[] = [];
-
-const SAKSTITLER: Record<string, string> = {
-  'fp-001-happy-path': 'Full opptjening',
-  'fp-002-ikke-medlem': 'Ikke medlem',
-  'fp-003-for-fa-mnd': 'For kort opptjening',
-  'fp-004-annualisert-under-halv-G': 'Lav beregnet årsinntekt',
-  'fp-005-manuell-vurdering': 'Manuell vurdering',
-  'fp-006-6G-tak': 'Inntekt over 6 G',
-  'fp-007-kun-far': 'Kun far har rett',
-  'fp-008-tvillinger': 'Tvillinger',
-  'fp-009-stipend-lanekassen': 'Kun stipend',
-  'fp-010-trillinger-80': 'Trillinger, 80 prosent',
-  'fp-011-kun-mor-80': 'Kun mor har rett',
-  'fp-012-oppgitt-arsinntekt-null': 'Mangler årsinntekt',
-};
-
-const SAKSFORKLARINGER: Record<string, string> = {
-  'fp-001-happy-path': 'Søker har nok opptjening, norsk medlemskap og stabil inntekt.',
-  'fp-002-ikke-medlem': 'Søker mangler medlemskap i folketrygden.',
-  'fp-003-for-fa-mnd': 'Søker har inntekt i for få av de siste ti månedene.',
-  'fp-004-annualisert-under-halv-G': 'Beregnet årsinntekt er under minstekravet på 1/2 G.',
-  'fp-005-manuell-vurdering': 'Inntektsavviket er for stort og må vurderes manuelt.',
-  'fp-006-6G-tak': 'Søker har inntekt over 6 G. Beregningsgrunnlaget begrenses av taket.',
-  'fp-007-kun-far': 'Bare far har rett til foreldrepenger i denne saken.',
-  'fp-008-tvillinger': 'Søknaden gjelder tvillinger og skal gi flerbarnsbonus.',
-  'fp-009-stipend-lanekassen': 'Søker har bare stipend, som ikke gir opptjening.',
-  'fp-010-trillinger-80': 'Søknaden gjelder trillinger med 80 prosent dekningsgrad.',
-  'fp-011-kun-mor-80': 'Bare mor har rett til foreldrepenger med 80 prosent dekningsgrad.',
-  'fp-012-oppgitt-arsinntekt-null': 'Søker mangler oppgitt årsinntekt.',
-};
-
-async function hentVedtak(soknad: Soknad): Promise<Vedtak> {
-  const response = await fetch('/api/foreldrepenger/vurder', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(soknad),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Backend svarte med HTTP ${response.status}`);
-  }
-
-  return (await response.json()) as Vedtak;
-}
 
 export function ForeldrepengerDashboard() {
   const [soknaderState, setSoknaderState] = useState<SoknaderState>({ type: 'loading' });
@@ -265,19 +157,9 @@ export function ForeldrepengerDashboard() {
       }
     }
 
-    async function hentSoknader() {
+    async function lastSoknader() {
       try {
-        const response = await fetch('/api/foreldrepenger/soknader');
-
-        if (!response.ok) {
-          throw new Error(`Backend svarte med HTTP ${response.status}`);
-        }
-
-        const data = (await response.json()) as Soknad[];
-
-        if (!Array.isArray(data)) {
-          throw new Error('Backend returnerte ikke en liste med søknader');
-        }
+        const data = await hentSoknader();
 
         if (!isActive) {
           return;
@@ -304,7 +186,7 @@ export function ForeldrepengerDashboard() {
       }
     }
 
-    hentSoknader();
+    lastSoknader();
 
     return () => {
       isActive = false;
@@ -954,290 +836,4 @@ export function ForeldrepengerDashboard() {
       </Modal>
     </VStack>
   );
-}
-
-function Metric({ label, value }: Readonly<{ label: string; value: string }>) {
-  return (
-    <Box
-      background="raised"
-      borderColor="neutral-subtle"
-      borderRadius="2"
-      borderWidth="1"
-      minHeight="78px"
-      padding="space-16"
-    >
-      <Detail uppercase>{label}</Detail>
-      <Heading size="medium" level="2">
-        {value}
-      </Heading>
-    </Box>
-  );
-}
-
-function Surface({
-  children,
-  ariaLive,
-  contentAlign = 'stretch',
-  marginInline,
-  maxWidth,
-}: Readonly<{
-  children: ReactNode;
-  ariaLive?: 'off' | 'polite' | 'assertive';
-  contentAlign?: 'start' | 'center' | 'end' | 'stretch';
-  marginInline?: 'auto';
-  maxWidth?: string;
-}>) {
-  return (
-    <Box
-      background="raised"
-      borderColor="neutral-subtle"
-      borderRadius="2"
-      borderWidth="1"
-      padding="space-16"
-      aria-live={ariaLive}
-      marginInline={marginInline}
-      maxWidth={maxWidth}
-    >
-      <VStack align={contentAlign} gap="space-16">
-        {children}
-      </VStack>
-    </Box>
-  );
-}
-
-function FactGrid({
-  children,
-  compact = false,
-}: Readonly<{ children: ReactNode; compact?: boolean }>) {
-  return (
-    <HGrid
-      as="dl"
-      columns={{
-        xs: 1,
-        md: compact
-          ? 'minmax(150px, 0.75fr) minmax(0, 1.25fr)'
-          : 'minmax(140px, 0.75fr) minmax(0, 1.25fr)',
-      }}
-      gap={compact ? 'space-8 space-16' : 'space-12 space-16'}
-      margin="space-0"
-    >
-      {children}
-    </HGrid>
-  );
-}
-
-function Fact({ label, value }: Readonly<{ label: string; value: string }>) {
-  return (
-    <>
-      <Box as="dt">
-        <Detail as="span">{label}</Detail>
-      </Box>
-      <Box as="dd" margin="space-0" minWidth="0">
-        <Label as="span" size="small">
-          {value}
-        </Label>
-      </Box>
-    </>
-  );
-}
-
-function VedtakTag({ type }: Readonly<{ type: VedtakType }>) {
-  const variant =
-    type === 'INNVILGET_FORELDREPENGER' ? 'success' : type === 'AVSLAG' ? 'error' : 'warning';
-
-  return (
-    <Tag size="small" variant={variant}>
-      {formatVedtakType(type)}
-    </Tag>
-  );
-}
-
-function CaseStatusTag({
-  saksbehandlerVurdering,
-  status,
-  vedtak,
-}: Readonly<{
-  saksbehandlerVurdering?: SaksbehandlerVurdering | null;
-  status?: VurderingStatus | null;
-  vedtak?: Vedtak | null;
-}>) {
-  if (saksbehandlerVurdering) {
-    return (
-      <Tag size="small" variant="success">
-        Vurdert manuelt
-      </Tag>
-    );
-  }
-
-  if (vedtak) {
-    return <VedtakTag type={vedtak.type} />;
-  }
-
-  if (status?.type === 'loading') {
-    return (
-      <Tag size="small" variant="moderate">
-        Vurderes
-      </Tag>
-    );
-  }
-
-  if (status?.type === 'error') {
-    return (
-      <Tag size="small" variant="error">
-        Feil
-      </Tag>
-    );
-  }
-
-  return (
-    <Tag size="small" variant="neutral">
-      Ikke vurdert
-    </Tag>
-  );
-}
-
-function RegelResultatTag({ resultat }: Readonly<{ resultat: Regelresultat }>) {
-  const variant =
-    resultat === 'OPPFYLT'
-      ? 'success'
-      : resultat === 'IKKE_OPPFYLT'
-        ? 'error'
-        : resultat === 'MANUELL_VURDERING'
-          ? 'warning'
-          : 'neutral';
-
-  return (
-    <Tag size="small" variant={variant}>
-      {formatRegelresultat(resultat)}
-    </Tag>
-  );
-}
-
-function maskerFodselsnummer(fodselsnummer: string) {
-  return `${fodselsnummer.slice(0, 6)}*****`;
-}
-
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat('nb-NO', {
-    currency: 'NOK',
-    maximumFractionDigits: 0,
-    style: 'currency',
-  }).format(value);
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat('nb-NO').format(new Date(value));
-}
-
-function formatSaksnummer(id: string) {
-  const match = id.match(/fp-(\d+)/i);
-
-  return match ? `FP-${match[1]}` : id.toUpperCase();
-}
-
-function formatSakstittel(soknad: Soknad) {
-  return SAKSTITLER[soknad.id] ?? formatSakstittelFraBeskrivelse(soknad.beskrivelse);
-}
-
-function formatSaksforklaring(soknad: Soknad) {
-  return SAKSFORKLARINGER[soknad.id] ?? formatSynligTekst(soknad.beskrivelse);
-}
-
-function formatSakstittelFraBeskrivelse(value: string) {
-  const title = value
-    .replace(/^Happy path:\s*/i, '')
-    .split(/[—→]/)[0]
-    .trim();
-
-  return truncate(title || value, 84);
-}
-
-function formatSynligTekst(value: string) {
-  return value
-    .replace(/\bSoker\b/g, 'Søker')
-    .replace(/\bsoker\b/g, 'søker')
-    .replace(/\bma\b/g, 'må')
-    .replace(/\bfa\b/g, 'få')
-    .replace(/\bmaneder\b/g, 'måneder')
-    .replace(/\bvilkarene\b/g, 'vilkårene')
-    .replace(/\bvilkar\b/g, 'vilkår')
-    .replace(/\barssats\b/g, 'årssats')
-    .replace(/\bstonadsperiode\b/g, 'stønadsperiode')
-    .replace(/\bengangsstonad\b/g, 'engangsstønad')
-    .replace(/\bannualisert\b/g, 'beregnet årsinntekt');
-}
-
-function truncate(value: string, maxLength: number) {
-  if (value.length <= maxLength) {
-    return value;
-  }
-
-  return `${value.slice(0, maxLength - 1).trim()}…`;
-}
-
-function formatVedtakType(type: VedtakType) {
-  const labels: Record<VedtakType, string> = {
-    AVSLAG: 'Avslag',
-    ENGANGSSTONAD: 'Engangsstønad',
-    INNVILGET_FORELDREPENGER: 'Foreldrepenger',
-    MANUELL_VURDERING: 'Manuell behandling',
-  };
-
-  return labels[type];
-}
-
-function formatRegelresultat(resultat: Regelresultat) {
-  const labels: Record<Regelresultat, string> = {
-    IKKE_AKTUELL: 'Ikke aktuell',
-    IKKE_OPPFYLT: 'Ikke oppfylt',
-    MANUELL_VURDERING: 'Manuell vurdering',
-    OPPFYLT: 'Oppfylt',
-  };
-
-  return labels[resultat];
-}
-
-function formatRettsforhold(value: Rettsforhold) {
-  const labels: Record<Rettsforhold, string> = {
-    BEGGE: 'Begge foreldre',
-    KUN_FAR: 'Kun far',
-    KUN_MOR: 'Kun mor',
-  };
-
-  return labels[value];
-}
-
-function formatDekningsgrad(value: Dekningsgrad) {
-  return value === 'HUNDRE_PROSENT' ? '100 prosent' : '80 prosent';
-}
-
-function formatAvvik(value: number | null) {
-  if (value === null) {
-    return 'Ikke beregnet';
-  }
-
-  return `${new Intl.NumberFormat('nb-NO', { maximumFractionDigits: 1 }).format(value)} prosent`;
-}
-
-function formatOptionalCurrency(value: number | null) {
-  return value === null ? 'Ikke beregnet' : formatCurrency(value);
-}
-
-function formatJaNei(value: boolean) {
-  return value ? 'Ja' : 'Nei';
-}
-
-function formatInntektstype(value: Inntektstype) {
-  const labels: Record<Inntektstype, string> = {
-    AAP: 'AAP',
-    ARBEID: 'Arbeid',
-    DAGPENGER: 'Dagpenger',
-    FORELDREPENGER: 'Foreldrepenger',
-    PLEIEPENGER: 'Pleiepenger',
-    STIPEND_LANEKASSEN: 'Stipend Lånekassen',
-    SVANGERSKAPSPENGER: 'Svangerskapspenger',
-    SYKEPENGER: 'Sykepenger',
-  };
-
-  return labels[value];
 }

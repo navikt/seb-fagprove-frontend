@@ -137,12 +137,14 @@ src/
 │   ├── layout.tsx
 │   └── page.tsx
 ├── components/
-│   └── ForeldrepengerDashboard.tsx
-└── mocks/
-    ├── handlers.ts
-    ├── browser.ts
-    ├── server.ts
-    └── MSWProvider.tsx
+│   ├── ForeldrepengerDashboard.tsx
+│   └── foreldrepenger/
+│       └── ForeldrepengerUi.tsx
+├── lib/
+│   ├── foreldrepengerApi.ts
+│   └── foreldrepengerFormat.ts
+└── types/
+    └── foreldrepenger.ts
 ```
 
 ## NAIS
