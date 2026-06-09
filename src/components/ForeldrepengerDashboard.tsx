@@ -2,7 +2,6 @@
 
 import {
   Alert,
-  BodyLong,
   BodyShort,
   Box,
   Button,
@@ -12,45 +11,17 @@ import {
   HStack,
   InternalHeader,
   Label,
-  Loader,
-  Modal,
-  Radio,
-  RadioGroup,
   Spacer,
-  Tag,
-  Table,
-  Textarea,
   VStack,
 } from '@navikt/ds-react';
-import { FileCheckmarkIcon, RotateRightIcon, TasklistStartIcon } from '@navikt/aksel-icons';
+import { TasklistStartIcon } from '@navikt/aksel-icons';
 import { useEffect, useMemo, useState } from 'react';
-import {
-  CaseStatusTag,
-  Fact,
-  FactGrid,
-  Metric,
-  RegelResultatTag,
-  Surface,
-  VedtakTag,
-} from '@/components/foreldrepenger/ForeldrepengerUi';
+import { Metric, Surface } from '@/components/foreldrepenger/ForeldrepengerUi';
+import { ManuellBehandlingModal } from '@/components/foreldrepenger/ManuellBehandlingModal';
+import { Soknadsliste } from '@/components/foreldrepenger/Soknadsliste';
+import { ValgtSoknadPanel } from '@/components/foreldrepenger/ValgtSoknadPanel';
 import { hentSoknader, hentVedtak } from '@/lib/foreldrepengerApi';
-import {
-  GODKJENTE_INNTEKTSTYPER,
-  formatAvvik,
-  formatCurrency,
-  formatDate,
-  formatDekningsgrad,
-  formatInntektstype,
-  formatJaNei,
-  formatOptionalCurrency,
-  formatRettsforhold,
-  formatSaksforklaring,
-  formatSaksnummer,
-  formatSakstittel,
-  formatSynligTekst,
-  formatVedtakType,
-  maskerFodselsnummer,
-} from '@/lib/foreldrepengerFormat';
+import { formatSaksnummer, formatVedtakType } from '@/lib/foreldrepengerFormat';
 import type {
   SaksbehandlerResultat,
   SaksbehandlerVurdering,
@@ -351,7 +322,6 @@ export function ForeldrepengerDashboard() {
 
         {soknaderState.type === 'loading' && (
           <Surface ariaLive="polite" contentAlign="center" marginInline="auto" maxWidth="1420px">
-            <Loader size="medium" title="Henter søknader" />
             <BodyShort>Henter søknader.</BodyShort>
           </Surface>
         )}
@@ -379,461 +349,40 @@ export function ForeldrepengerDashboard() {
             marginInline="auto"
             maxWidth="1420px"
           >
-            <Box
-              as="aside"
-              aria-label="Søknadsliste"
-              background="raised"
-              borderColor="neutral-subtle"
-              borderRadius="2"
-              borderWidth="1"
-              padding="space-16"
-            >
-              <VStack gap="space-12">
-                <HStack align="center" gap="space-12" justify="space-between">
-                  <Heading size="small" level="2">
-                    Saker
-                  </Heading>
-                  <Tag size="small" variant="neutral">
-                    {soknader.length}
-                  </Tag>
-                </HStack>
-                <VStack gap="space-8">
-                  {sorterteSoknader.map((soknad) => {
-                    const vedtak = vedtakBySoknadId[soknad.id];
-                    const status = vurderingStatusBySoknadId[soknad.id];
-                    const saksbehandlerVurdering = saksbehandlerVurderingBySoknadId[soknad.id];
-                    const isSelected = soknad.id === selectedSoknad.id;
+            <Soknadsliste
+              soknader={sorterteSoknader}
+              selectedSoknadId={selectedSoknad.id}
+              vedtakBySoknadId={vedtakBySoknadId}
+              vurderingStatusBySoknadId={vurderingStatusBySoknadId}
+              saksbehandlerVurderingBySoknadId={saksbehandlerVurderingBySoknadId}
+              onSelectSoknad={setSelectedId}
+            />
 
-                    return (
-                      <Box
-                        as="button"
-                        background={isSelected ? 'accent-moderate' : 'default'}
-                        borderColor={isSelected ? 'accent' : 'neutral-subtle'}
-                        borderRadius="2"
-                        borderWidth="1"
-                        data-selected={isSelected}
-                        key={soknad.id}
-                        onClick={() => {
-                          setSelectedId(soknad.id);
-                        }}
-                        padding="space-12"
-                        type="button"
-                        width="100%"
-                      >
-                        <VStack align="stretch" gap="space-4">
-                          <HStack align="center" justify="space-between" gap="space-8">
-                            <Detail align="start" textColor="subtle">
-                              {formatSaksnummer(soknad.id)}
-                            </Detail>
-                            <CaseStatusTag
-                              status={status}
-                              vedtak={vedtak}
-                              saksbehandlerVurdering={saksbehandlerVurdering}
-                            />
-                          </HStack>
-                          <BodyShort align="start" weight="semibold">
-                            {formatSakstittel(soknad)}
-                          </BodyShort>
-                          <Detail align="start" textColor="subtle">
-                            {maskerFodselsnummer(soknad.fodselsnummer)} · Termin{' '}
-                            {formatDate(soknad.termindato)} ·{' '}
-                            {formatRettsforhold(soknad.rettsforhold)}
-                          </Detail>
-                        </VStack>
-                      </Box>
-                    );
-                  })}
-                </VStack>
-              </VStack>
-            </Box>
-
-            <VStack gap="space-16" as="section" aria-label="Valgt søknad">
-              <Box
-                background="raised"
-                borderColor="neutral-subtle"
-                borderRadius="2"
-                borderWidth="1"
-                padding="space-16"
-              >
-                <HStack align="start" gap="space-12" justify="space-between" wrap>
-                  <VStack gap="space-4" minWidth="0">
-                    <Detail uppercase>Valgt søknad</Detail>
-                    <HStack align="center" gap="space-8" wrap>
-                      <Heading size="medium" level="2">
-                        Sak {formatSaksnummer(selectedSoknad.id)}:{' '}
-                        {formatSakstittel(selectedSoknad)}
-                      </Heading>
-                      <CaseStatusTag
-                        status={vurderingStatus}
-                        vedtak={visibleVedtak}
-                        saksbehandlerVurdering={selectedSaksbehandlerVurdering}
-                      />
-                    </HStack>
-                    <BodyShort textColor="subtle">{formatSaksforklaring(selectedSoknad)}</BodyShort>
-                  </VStack>
-                  <HStack gap="space-12" wrap>
-                    {visibleVedtak?.type === 'MANUELL_VURDERING' && (
-                      <Button
-                        icon={<TasklistStartIcon aria-hidden />}
-                        onClick={() => apneManuellBehandling(selectedSoknad.id)}
-                        size="small"
-                        variant={selectedSaksbehandlerVurdering ? 'secondary' : 'primary'}
-                      >
-                        {selectedSaksbehandlerVurdering
-                          ? 'Endre manuell vurdering'
-                          : 'Start manuell behandling'}
-                      </Button>
-                    )}
-                    {vurderingErrorMessage && (
-                      <>
-                        <Button
-                          icon={<RotateRightIcon aria-hidden />}
-                          loading={isVurderingLoading}
-                          size="small"
-                          variant="secondary"
-                          onClick={oppdaterVurdering}
-                        >
-                          Prøv igjen
-                        </Button>
-                        <Alert size="small" variant="warning">
-                          Kunne ikke kjøre automatisk vurdering. {vurderingErrorMessage}
-                        </Alert>
-                      </>
-                    )}
-                  </HStack>
-                </HStack>
-              </Box>
-
-              <HGrid
-                align="start"
-                columns={{ xs: 1, lg: 'minmax(330px, 0.95fr) minmax(420px, 1.05fr)' }}
-                gap="space-16"
-              >
-                <Surface>
-                  <Heading size="small" level="3">
-                    Søker og søknad
-                  </Heading>
-                  <FactGrid>
-                    <Fact
-                      label="Fødselsnummer"
-                      value={maskerFodselsnummer(selectedSoknad.fodselsnummer)}
-                    />
-                    <Fact
-                      label="Norsk borger"
-                      value={selectedSoknad.erNorskBorger ? 'Ja' : 'Nei'}
-                    />
-                    <Fact label="Termindato" value={formatDate(selectedSoknad.termindato)} />
-                    <Fact
-                      label="Oppgitt årsinntekt"
-                      value={formatCurrency(selectedSoknad.oppgittArsinntekt)}
-                    />
-                    <Fact label="Barn" value={selectedSoknad.antallBarn.toString()} />
-                    <Fact label="Rett" value={formatRettsforhold(selectedSoknad.rettsforhold)} />
-                    <Fact
-                      label="Dekningsgrad"
-                      value={formatDekningsgrad(selectedSoknad.dekningsgrad)}
-                    />
-                  </FactGrid>
-                </Surface>
-
-                <Surface>
-                  <HStack align="center" gap="space-12" justify="space-between" wrap>
-                    <Heading size="small" level="3">
-                      Vurdering
-                    </Heading>
-                    {visibleVedtak ? (
-                      <VedtakTag type={visibleVedtak.type} />
-                    ) : (
-                      <Tag size="small" variant="neutral">
-                        Ikke vurdert
-                      </Tag>
-                    )}
-                  </HStack>
-                  {visibleVedtak ? (
-                    <>
-                      <FactGrid compact>
-                        <Fact label="Saksnummer" value={formatSaksnummer(visibleVedtak.soknadId)} />
-                        <Fact label="Resultat" value={formatVedtakType(visibleVedtak.type)} />
-                        <Fact
-                          label="Regler vurdert"
-                          value={visibleVedtak.regelvurderinger.length.toString()}
-                        />
-                        <Fact
-                          label="Behandling"
-                          value={
-                            selectedSaksbehandlerVurdering
-                              ? 'Vurdert av saksbehandler'
-                              : visibleVedtak.type === 'MANUELL_VURDERING'
-                                ? 'Må behandles manuelt'
-                                : 'Automatisk vurdert'
-                          }
-                        />
-                      </FactGrid>
-                      {visibleVedtak.type === 'MANUELL_VURDERING' &&
-                        (selectedSaksbehandlerVurdering ? (
-                          <Alert variant="success">
-                            <VStack gap="space-4">
-                              <Label>Manuell vurdering er registrert</Label>
-                              <BodyShort>
-                                Konklusjon:{' '}
-                                {formatVedtakType(selectedSaksbehandlerVurdering.resultat)}.
-                              </BodyShort>
-                              <BodyShort>{selectedSaksbehandlerVurdering.begrunnelse}</BodyShort>
-                            </VStack>
-                          </Alert>
-                        ) : (
-                          <Alert variant="warning">
-                            Saken venter på manuell konklusjon fra saksbehandler.
-                          </Alert>
-                        ))}
-                      <BodyLong>{formatSynligTekst(visibleVedtak.begrunnelse)}</BodyLong>
-                    </>
-                  ) : (
-                    <BodyLong>
-                      {isVurderingLoading
-                        ? 'Automatisk vurdering kjøres.'
-                        : 'Vurderingen er ikke klar ennå.'}
-                    </BodyLong>
-                  )}
-                </Surface>
-              </HGrid>
-
-              {visibleVedtak && (
-                <HGrid align="start" columns={{ xs: 1, lg: 3 }} gap="space-16">
-                  {visibleVedtak.beregningsgrunnlag && (
-                    <Surface>
-                      <Heading size="small" level="3">
-                        Beregningsgrunnlag
-                      </Heading>
-                      <FactGrid compact>
-                        <Fact
-                          label="Årssats"
-                          value={formatCurrency(visibleVedtak.beregningsgrunnlag.arssats)}
-                        />
-                        <Fact
-                          label="Oppgitt årsinntekt"
-                          value={formatCurrency(visibleVedtak.beregningsgrunnlag.oppgittArsinntekt)}
-                        />
-                        <Fact
-                          label="Avvik"
-                          value={formatAvvik(visibleVedtak.beregningsgrunnlag.avvikProsent)}
-                        />
-                        <Fact
-                          label="Grunnlag"
-                          value={formatOptionalCurrency(
-                            visibleVedtak.beregningsgrunnlag.grunnlagBelop,
-                          )}
-                        />
-                        <Fact
-                          label="Manuell vurdering"
-                          value={formatJaNei(
-                            visibleVedtak.beregningsgrunnlag.kreverManuellVurdering,
-                          )}
-                        />
-                      </FactGrid>
-                    </Surface>
-                  )}
-
-                  {visibleVedtak.stonadsperiode && (
-                    <Surface>
-                      <Heading size="small" level="3">
-                        Stønadsperiode
-                      </Heading>
-                      <FactGrid compact>
-                        <Fact
-                          label="Total periode"
-                          value={`${visibleVedtak.stonadsperiode.totalUker} uker`}
-                        />
-                        <Fact
-                          label="Rett"
-                          value={formatRettsforhold(visibleVedtak.stonadsperiode.rettsforhold)}
-                        />
-                        <Fact
-                          label="Barn"
-                          value={visibleVedtak.stonadsperiode.antallBarn.toString()}
-                        />
-                        <Fact
-                          label="Dekningsgrad"
-                          value={formatDekningsgrad(visibleVedtak.stonadsperiode.dekningsgrad)}
-                        />
-                      </FactGrid>
-                    </Surface>
-                  )}
-
-                  {visibleVedtak.kvoter && (
-                    <Surface>
-                      <Heading size="small" level="3">
-                        Kvotefordeling
-                      </Heading>
-                      <FactGrid compact>
-                        <Fact
-                          label="Mødrekvote"
-                          value={`${visibleVedtak.kvoter.modrekvote} uker`}
-                        />
-                        <Fact
-                          label="Fedrekvote"
-                          value={`${visibleVedtak.kvoter.fedrekvote} uker`}
-                        />
-                        <Fact
-                          label="Fellesperiode"
-                          value={`${visibleVedtak.kvoter.fellesperiode} uker`}
-                        />
-                        <Fact
-                          label="Forhåndskvote mor"
-                          value={`${visibleVedtak.kvoter.forhandskvoteMor} uker`}
-                        />
-                        <Fact
-                          label="Flerbarnsbonus"
-                          value={`${visibleVedtak.kvoter.flerbarnsbonus} uker`}
-                        />
-                        <Fact label="Sum" value={`${visibleVedtak.kvoter.totalUker} uker`} />
-                      </FactGrid>
-                    </Surface>
-                  )}
-                </HGrid>
-              )}
-
-              {visibleVedtak && (
-                <Surface>
-                  <HStack align="center" gap="space-12" justify="space-between" wrap>
-                    <Heading size="small" level="3">
-                      Regelvurderinger
-                    </Heading>
-                    <Tag size="small" variant="moderate">
-                      {visibleVedtak.regelvurderinger.length} regler
-                    </Tag>
-                  </HStack>
-                  <Box overflowX="auto">
-                    <Table size="small" zebraStripes>
-                      <Table.Header>
-                        <Table.Row>
-                          <Table.HeaderCell scope="col">Regel</Table.HeaderCell>
-                          <Table.HeaderCell scope="col">Resultat</Table.HeaderCell>
-                          <Table.HeaderCell scope="col">Begrunnelse</Table.HeaderCell>
-                        </Table.Row>
-                      </Table.Header>
-                      <Table.Body>
-                        {visibleVedtak.regelvurderinger.map((regel) => (
-                          <Table.Row key={regel.regel}>
-                            <Table.HeaderCell scope="row">{regel.regel}</Table.HeaderCell>
-                            <Table.DataCell>
-                              <RegelResultatTag resultat={regel.resultat} />
-                            </Table.DataCell>
-                            <Table.DataCell>{formatSynligTekst(regel.begrunnelse)}</Table.DataCell>
-                          </Table.Row>
-                        ))}
-                      </Table.Body>
-                    </Table>
-                  </Box>
-                </Surface>
-              )}
-
-              <Surface>
-                <HStack align="center" gap="space-12" justify="space-between" wrap>
-                  <Heading size="small" level="3">
-                    Inntektshistorikk
-                  </Heading>
-                  <Tag size="small" variant="moderate">
-                    {selectedSoknad.inntektshistorikk.length} måneder
-                  </Tag>
-                </HStack>
-                <Box overflowX="auto">
-                  <Table size="small" zebraStripes>
-                    <Table.Header>
-                      <Table.Row>
-                        <Table.HeaderCell scope="col">Måned</Table.HeaderCell>
-                        <Table.HeaderCell scope="col">Type</Table.HeaderCell>
-                        <Table.HeaderCell scope="col">Beløp</Table.HeaderCell>
-                        <Table.HeaderCell scope="col">Godkjent</Table.HeaderCell>
-                      </Table.Row>
-                    </Table.Header>
-                    <Table.Body>
-                      {selectedSoknad.inntektshistorikk.map((inntekt) => (
-                        <Table.Row key={`${inntekt.maned}-${inntekt.type}-${inntekt.belop}`}>
-                          <Table.HeaderCell scope="row">{inntekt.maned}</Table.HeaderCell>
-                          <Table.DataCell>{formatInntektstype(inntekt.type)}</Table.DataCell>
-                          <Table.DataCell>{formatCurrency(inntekt.belop)}</Table.DataCell>
-                          <Table.DataCell>
-                            {GODKJENTE_INNTEKTSTYPER.includes(inntekt.type) ? 'Ja' : 'Nei'}
-                          </Table.DataCell>
-                        </Table.Row>
-                      ))}
-                    </Table.Body>
-                  </Table>
-                </Box>
-              </Surface>
-            </VStack>
+            <ValgtSoknadPanel
+              selectedSoknad={selectedSoknad}
+              visibleVedtak={visibleVedtak}
+              selectedSaksbehandlerVurdering={selectedSaksbehandlerVurdering}
+              vurderingStatus={vurderingStatus}
+              isVurderingLoading={isVurderingLoading}
+              vurderingErrorMessage={vurderingErrorMessage}
+              onStartManuellBehandling={apneManuellBehandling}
+              onRetryVurdering={oppdaterVurdering}
+            />
           </HGrid>
         )}
       </Box>
 
-      <Modal
-        header={{
-          heading: 'Manuell behandling',
-          label: manuellModalSoknad ? `Sak ${formatSaksnummer(manuellModalSoknad.id)}` : undefined,
-          size: 'small',
-        }}
-        onClose={lukkManuellBehandling}
+      <ManuellBehandlingModal
         open={manuellModalOpen}
-        placement="top"
-        width="medium"
-      >
-        <Modal.Body>
-          {manuellModalSoknad && manuellModalVedtak ? (
-            <VStack gap="space-16">
-              <Alert variant="warning">{formatSynligTekst(manuellModalVedtak.begrunnelse)}</Alert>
-              <FactGrid compact>
-                <Fact label="Saksnummer" value={formatSaksnummer(manuellModalSoknad.id)} />
-                <Fact
-                  label="Fødselsnummer"
-                  value={maskerFodselsnummer(manuellModalSoknad.fodselsnummer)}
-                />
-                <Fact
-                  label="Oppgitt årsinntekt"
-                  value={formatCurrency(manuellModalSoknad.oppgittArsinntekt)}
-                />
-                <Fact
-                  label="Beregnet årsinntekt"
-                  value={formatOptionalCurrency(
-                    manuellModalVedtak.beregningsgrunnlag?.arssats ?? null,
-                  )}
-                />
-                <Fact
-                  label="Avvik"
-                  value={formatAvvik(manuellModalVedtak.beregningsgrunnlag?.avvikProsent ?? null)}
-                />
-                <Fact label="Rett" value={formatRettsforhold(manuellModalSoknad.rettsforhold)} />
-              </FactGrid>
-              <RadioGroup
-                legend="Saksbehandlers konklusjon"
-                onChange={(value) => setManuellResultat(value as SaksbehandlerResultat)}
-                value={manuellResultat}
-              >
-                <Radio value="INNVILGET_FORELDREPENGER">Innvilg foreldrepenger</Radio>
-                <Radio value="ENGANGSSTONAD">Innvilg engangsstønad</Radio>
-                <Radio value="AVSLAG">Avslag</Radio>
-              </RadioGroup>
-              <Textarea
-                label="Begrunnelse"
-                maxLength={500}
-                minRows={4}
-                onChange={(event) => setManuellBegrunnelse(event.target.value)}
-                value={manuellBegrunnelse}
-              />
-            </VStack>
-          ) : (
-            <BodyLong>Ingen manuell sak er valgt.</BodyLong>
-          )}
-        </Modal.Body>
-        <Modal.Footer>
-          <Button icon={<FileCheckmarkIcon aria-hidden />} onClick={lagreManuellBehandling}>
-            Lagre vurdering
-          </Button>
-          <Button onClick={lukkManuellBehandling} variant="secondary">
-            Avbryt
-          </Button>
-        </Modal.Footer>
-      </Modal>
+        soknad={manuellModalSoknad}
+        vedtak={manuellModalVedtak}
+        resultat={manuellResultat}
+        begrunnelse={manuellBegrunnelse}
+        onResultatChange={setManuellResultat}
+        onBegrunnelseChange={setManuellBegrunnelse}
+        onSave={lagreManuellBehandling}
+        onClose={lukkManuellBehandling}
+      />
     </VStack>
   );
 }

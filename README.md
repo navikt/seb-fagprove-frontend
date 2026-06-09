@@ -139,7 +139,16 @@ src/
 ├── components/
 │   ├── ForeldrepengerDashboard.tsx
 │   └── foreldrepenger/
-│       └── ForeldrepengerUi.tsx
+│       ├── ForeldrepengerUi.tsx
+│       ├── InntektshistorikkTabell.tsx
+│       ├── ManuellBehandlingModal.tsx
+│       ├── RegelvurderingTabell.tsx
+│       ├── SoknadDetaljer.tsx
+│       ├── Soknadsliste.tsx
+│       ├── ValgtSoknadHeader.tsx
+│       ├── ValgtSoknadPanel.tsx
+│       ├── VedtakDetaljer.tsx
+│       └── Vurderingspanel.tsx
 ├── lib/
 │   ├── foreldrepengerApi.ts
 │   └── foreldrepengerFormat.ts
